@@ -25,4 +25,17 @@
 mov_avg:
  PUSH {r2-r11, lr}
 
+@R0,R1 already loaded with N and accel_buff respectively
+
+ MOV R2, R0        @ R2 = N (loop counter)
+ MOV R4, #0        @ sum = 0
+
+LOOP:
+ LDR R3, [R1], #4  @ load [R1] into R3, post index
+ ADD R4, R4, R3    @ sum += value
+ SUBS R2, R2, #1   @ decrement loop counter
+ BNE LOOP          @ repeat until N values added
+
+ SDIV R0, R4, R0   @ result = sum / N
+
  POP {r2-r11, pc}
