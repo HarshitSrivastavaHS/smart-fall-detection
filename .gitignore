@@ -4,3 +4,6 @@ build/
 *.elf
 *.bin
 *.hex
+.settings/
+*.launch
+*.cfg
