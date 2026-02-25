@@ -226,7 +226,7 @@ int main(void)
 			}
 			break;
 		case FALL_CONFIRMED:
-			if (now - last_led_toggle_timestamp >= 200) {  // LED Blinking at 5Hz
+			if (now - last_led_toggle_timestamp >= 200) {  // LED Blinking at 2.5Hz
 				BSP_LED_Toggle(LED2);
 				last_led_toggle_timestamp = now;
 			}
@@ -244,7 +244,7 @@ int main(void)
 		case LONG_LIE:
 			HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_SET);
 			if (now - last_led_toggle_timestamp >= 50) {
-				BSP_LED_Toggle(LED2);  // LED Blinking at 20Hz
+				BSP_LED_Toggle(LED2);  // LED Blinking at 10Hz
 				last_led_toggle_timestamp = now;
 			}
 			if (BSP_PB_GetState(BUTTON_USER) == BUTTON_PRESSED) {
