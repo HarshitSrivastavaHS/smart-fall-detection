@@ -24,6 +24,12 @@ extern int mov_avg(int N, int* accel_buff); // asm implementation
 
 int mov_avg_C(int N, int* accel_buff); // Reference C implementation
 
+static int dominant_axis_prev = 2;           // previous dominant axis, assume vertical Z initially
+static uint32_t orientation_change_start = 0; // time when axis change started
+const uint32_t ORIENTATION_TIME_THRESHOLD = 500; // max time (ms) for a "rapid flip"
+int orientation_changed = 0;
+
+
 UART_HandleTypeDef huart1;
 
 /*
@@ -42,7 +48,8 @@ typedef enum {
 		FREEFALL,
 		IMPACT,
 		FALL_CONFIRMED,
-		LONG_LIE
+		LONG_LIE,
+		ORIENTATION_CHANGE
 } states;
 
 const char* state_to_string(states state){ // helper function for printing current state
@@ -52,6 +59,7 @@ const char* state_to_string(states state){ // helper function for printing curre
     case IMPACT: return "IMPACT";
     case FALL_CONFIRMED: return "FALL_CONFIRMED";
     case LONG_LIE: return "LONG_LIE";
+    case ORIENTATION_CHANGE: return "ORIENTATION CHANGED";
     default: return "UNKNOWN";
     }
 }
@@ -59,6 +67,9 @@ const char* state_to_string(states state){ // helper function for printing curre
 
 int main(void)
 {
+	int fall_logged = 0;
+	int longlie_logged = 0;
+	int normal_logged = 0;
 	const int N=4;
 
 	/* Reset of all peripherals, Initializes the Flash interface and the Systick. */
@@ -90,6 +101,10 @@ int main(void)
 	uint32_t now = 0;
 
 
+	//orientation trackers
+	int previous_orientation = -1;
+	int current_orientation = -1;
+	int orientation_changed = 0;
 
 	// Setting UP GPIO Pin D7 (PortA, Pin4)
 	__HAL_RCC_GPIOA_CLK_ENABLE();
@@ -99,6 +114,9 @@ int main(void)
 	GPIO_InitStruct.Pull = GPIO_NOPULL;
 	GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
 	HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
+	int dominant_axis = 0;
+	int dominant_axis_prev = 0;
 
 	while (1)
 	{
@@ -134,6 +152,40 @@ int main(void)
 		accel_filt_asm[1]= (float)mov_avg(N,accel_buff_y) * (9.8/1000.0f);
 		accel_filt_asm[2]= (float)mov_avg(N,accel_buff_z) * (9.8/1000.0f);
 
+		// Copy filtered accelerometer values
+		float ax = accel_filt_asm[0];
+		float ay = accel_filt_asm[1];
+		float az = accel_filt_asm[2];
+
+		// Absolute values
+		float abs_ax = fabsf(ax);
+		float abs_ay = fabsf(ay);
+		float abs_az = fabsf(az);
+
+		// Determine dominant axis
+		int dominant_axis;
+		if (abs_ax > abs_ay && abs_ax > abs_az)
+		    dominant_axis = 0; // X
+		else if (abs_ay > abs_ax && abs_ay > abs_az)
+		    dominant_axis = 1; // Y
+		else
+		    dominant_axis = 2; // Z
+
+		// Detect rapid 90-degree flip
+		orientation_changed = 0;
+		if (dominant_axis != dominant_axis_prev) {
+		    if (orientation_change_start == 0) {
+		        orientation_change_start = now; // start timer
+		    } else if ((now - orientation_change_start) <= ORIENTATION_TIME_THRESHOLD) {
+		        // Rapid flip detected
+		        orientation_changed = 1;
+		        orientation_change_start = 0; // reset
+		    }
+		} else {
+		    orientation_change_start = 0; // reset if axis hasn't changed
+		}
+
+		dominant_axis_prev = dominant_axis; // update for next iteration
 
 		//Preprocessing the filtered outputs  The same needs to be done for the output from the assembly program as well
 //		float accel_filt_c[3]={0};
@@ -149,6 +201,7 @@ int main(void)
 		float gyro_mag = sqrtf(gyro_velocity[0]*gyro_velocity[0]
 								+ gyro_velocity[1]*gyro_velocity[1]
 								+ gyro_velocity[2]*gyro_velocity[2]);
+
 
 		/***************************UART transmission*******************************************/
 		char buffer[150]; // Create a buffer large enough to hold the text
@@ -189,23 +242,34 @@ int main(void)
 //			sprintf(buffer, "Averaged X : %f; Averaged Y : %f; Averaged Z : %f;\r\n\n",
 //					gyro_velocity[0], gyro_velocity[1], gyro_velocity[2]);
 //			HAL_UART_Transmit(&huart1, (uint8_t*)buffer, strlen(buffer), HAL_MAX_DELAY);
-
+/*
 			sprintf(buffer, "Accelerometer Magnitude: %f\r\n", accel_filt_mag);
 			HAL_UART_Transmit(&huart1, (uint8_t*)buffer, strlen(buffer), HAL_MAX_DELAY);
 			sprintf(buffer, "Gyro Magnitude: %f\r\n", gyro_mag);
 			HAL_UART_Transmit(&huart1, (uint8_t*)buffer, strlen(buffer), HAL_MAX_DELAY);
 			sprintf(buffer, "Current State: %s\r\n", state_to_string(current_state));
 			HAL_UART_Transmit(&huart1, (uint8_t*)buffer, strlen(buffer), HAL_MAX_DELAY);
-
+*/
 		}
 		now = HAL_GetTick();
 		switch (current_state) {
 		case NORMAL:
 			BSP_LED_Off(LED2);
 			high_rotation_detected = 0;
+			fall_logged = 0;
+			longlie_logged = 0;
+		    if (!normal_logged) {  // log only once per fall
+		        char buffer[150];
+		        sprintf(buffer, "[%lu ms] STATE: %s\r\n", HAL_GetTick(), state_to_string(current_state));
+		        HAL_UART_Transmit(&huart1, (uint8_t*)buffer, strlen(buffer), HAL_MAX_DELAY);
+		        normal_logged = 1;
+		    }
 			if (accel_filt_mag < FREEFALL_THRESHOLD) {
 				current_state = FREEFALL;
 			}
+		    else if (orientation_changed == 1) {
+		        current_state = NORMAL;
+		    }
 			break;
 		case FREEFALL:
 			if (accel_filt_mag > IMPACT_THRESHOLD) {
@@ -215,6 +279,22 @@ int main(void)
 				high_rotation_detected = 1;
 			}
 			break;
+		case ORIENTATION_CHANGE:
+			if (now - last_led_toggle_timestamp >= 200) {  // LED Blinking at 2.5Hz
+				BSP_LED_Toggle(LED2);
+				last_led_toggle_timestamp = now;
+			}
+			if (gyro_mag > NOT_MOVING_THRESHOLD) {
+				fall_confirmed_time = now;
+			}
+			if (now - fall_confirmed_time >= 10*1000) { //10seconods
+				current_state = LONG_LIE;
+				last_led_toggle_timestamp = now;
+			}
+			if (BSP_PB_GetState(BUTTON_USER) == BUTTON_PRESSED) {
+				current_state = NORMAL;
+			}
+		    break;
 		case IMPACT:
 			if(high_rotation_detected == 1) {
 				current_state = FALL_CONFIRMED;
@@ -226,6 +306,12 @@ int main(void)
 			}
 			break;
 		case FALL_CONFIRMED:
+		    if (!fall_logged) {  // log only once per fall
+		        char buffer[150];
+		        sprintf(buffer, "[%lu ms] STATE: %s\r\n", HAL_GetTick(), state_to_string(current_state));
+		        HAL_UART_Transmit(&huart1, (uint8_t*)buffer, strlen(buffer), HAL_MAX_DELAY);
+		        fall_logged = 1;
+		    }
 			if (now - last_led_toggle_timestamp >= 200) {  // LED Blinking at 2.5Hz
 				BSP_LED_Toggle(LED2);
 				last_led_toggle_timestamp = now;
@@ -243,6 +329,13 @@ int main(void)
 			break;
 		case LONG_LIE:
 			HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_SET);
+		    if (!longlie_logged) {
+		        char buffer[150];
+		        sprintf(buffer, "[%lu ms] STATE: %s\r\n", HAL_GetTick(), state_to_string(current_state));
+		        HAL_UART_Transmit(&huart1, (uint8_t*)buffer, strlen(buffer), HAL_MAX_DELAY);
+		        longlie_logged = 1;
+		    }
+
 			if (now - last_led_toggle_timestamp >= 50) {
 				BSP_LED_Toggle(LED2);  // LED Blinking at 10Hz
 				last_led_toggle_timestamp = now;
