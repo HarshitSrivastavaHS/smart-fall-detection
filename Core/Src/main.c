@@ -325,6 +325,7 @@ int main(void)
 			}
 			if (BSP_PB_GetState(BUTTON_USER) == BUTTON_PRESSED) {
 				current_state = NORMAL;
+				normal_logged = 0;
 			}
 			break;
 		case LONG_LIE:
@@ -346,6 +347,7 @@ int main(void)
 				}
 				if (now - button_press_start >= 5000) {
 					current_state = NORMAL;
+					normal_logged = 0;
 					button_press_start = 0;
 					HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_RESET);
 				}
