@@ -60,6 +60,9 @@ const char* state_to_string(states state){ // helper function for printing curre
 int main(void)
 {
 	const int N=4;
+	int fall_logged = 0;
+	int longlie_logged = 0;
+	int normal_logged = 0;
 
 	/* Reset of all peripherals, Initializes the Flash interface and the Systick. */
 	HAL_Init();
@@ -203,6 +206,14 @@ int main(void)
 		case NORMAL:
 			BSP_LED_Off(LED2);
 			high_rotation_detected = 0;
+			fall_logged = 0;
+			longlie_logged = 0;
+		    if (!normal_logged) {  // log only once per fall
+		        char buffer[150];
+		        sprintf(buffer, "[%lu ms] STATE: %s\r\n", HAL_GetTick(), state_to_string(current_state));
+		        HAL_UART_Transmit(&huart1, (uint8_t*)buffer, strlen(buffer), HAL_MAX_DELAY);
+		        normal_logged = 1;
+		    }
 			if (accel_filt_mag < FREEFALL_THRESHOLD) {
 				current_state = FREEFALL;
 			}
@@ -226,6 +237,12 @@ int main(void)
 			}
 			break;
 		case FALL_CONFIRMED:
+			if (!fall_logged) {  // log only once per fall
+		        char buffer[150];
+		        sprintf(buffer, "[%lu ms] STATE: %s\r\n", HAL_GetTick(), state_to_string(current_state));
+		        HAL_UART_Transmit(&huart1, (uint8_t*)buffer, strlen(buffer), HAL_MAX_DELAY);
+		        fall_logged = 1;
+		    }
 			if (now - last_led_toggle_timestamp >= 200) {  // LED Blinking at 2.5Hz
 				BSP_LED_Toggle(LED2);
 				last_led_toggle_timestamp = now;
@@ -239,10 +256,17 @@ int main(void)
 			}
 			if (BSP_PB_GetState(BUTTON_USER) == BUTTON_PRESSED) {
 				current_state = NORMAL;
+				normal_logged = 0;
 			}
 			break;
 		case LONG_LIE:
 			HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_SET);
+			if (!longlie_logged) {
+		        char buffer[150];
+		        sprintf(buffer, "[%lu ms] STATE: %s\r\n", HAL_GetTick(), state_to_string(current_state));
+		        HAL_UART_Transmit(&huart1, (uint8_t*)buffer, strlen(buffer), HAL_MAX_DELAY);
+		        longlie_logged = 1;
+		    }
 			if (now - last_led_toggle_timestamp >= 50) {
 				BSP_LED_Toggle(LED2);  // LED Blinking at 10Hz
 				last_led_toggle_timestamp = now;
@@ -253,6 +277,7 @@ int main(void)
 				}
 				if (now - button_press_start >= 5000) {
 					current_state = NORMAL;
+					normal_logged = 0;
 					button_press_start = 0;
 					HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_RESET);
 				}
