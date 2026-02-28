@@ -192,14 +192,14 @@ int main(void)
 //			sprintf(buffer, "Averaged X : %f; Averaged Y : %f; Averaged Z : %f;\r\n\n",
 //					gyro_velocity[0], gyro_velocity[1], gyro_velocity[2]);
 //			HAL_UART_Transmit(&huart1, (uint8_t*)buffer, strlen(buffer), HAL_MAX_DELAY);
-
+/*
 			sprintf(buffer, "Accelerometer Magnitude: %f\r\n", accel_filt_mag);
 			HAL_UART_Transmit(&huart1, (uint8_t*)buffer, strlen(buffer), HAL_MAX_DELAY);
 			sprintf(buffer, "Gyro Magnitude: %f\r\n", gyro_mag);
 			HAL_UART_Transmit(&huart1, (uint8_t*)buffer, strlen(buffer), HAL_MAX_DELAY);
 			sprintf(buffer, "Current State: %s\r\n", state_to_string(current_state));
 			HAL_UART_Transmit(&huart1, (uint8_t*)buffer, strlen(buffer), HAL_MAX_DELAY);
-
+*/
 		}
 		now = HAL_GetTick();
 		switch (current_state) {
