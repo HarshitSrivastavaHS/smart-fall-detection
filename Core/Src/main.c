@@ -10,14 +10,14 @@
 #include "../../Drivers/BSP/B-L4S5I-IOT01/stm32l4s5i_iot01_accelero.h"
 #include "../../Drivers/BSP/B-L4S5I-IOT01/stm32l4s5i_iot01_tsensor.h"
 #include "../../Drivers/BSP/B-L4S5I-IOT01/stm32l4s5i_iot01_gyro.h"
+#include "../../Drivers/STM32L4xx_HAL_Driver/Inc/stm32l4xx_hal_rtc.h" //RTC library
 #include <math.h>
-
 #include "stdio.h"
 #include "string.h"
 #include <sys/stat.h>
 
 static void UART1_Init(void);
-
+static void RTC_Init_Custom(void);
 extern void initialise_monitor_handles(void);	// for semi-hosting support (printf). Will not be required if transmitting via UART
 
 extern int mov_avg(int N, int* accel_buff); // asm implementation
@@ -25,6 +25,7 @@ extern int mov_avg(int N, int* accel_buff); // asm implementation
 int mov_avg_C(int N, int* accel_buff); // Reference C implementation
 
 UART_HandleTypeDef huart1;
+RTC_HandleTypeDef hrtc;
 
 /*
  * Defined Threshold Values
@@ -70,6 +71,7 @@ int main(void)
 	/* UART initialization  */
 	UART1_Init();
 
+	RTC_Init_Custom();
 	/* Peripheral initializations using BSP functions */
 	BSP_LED_Init(LED2);
 	BSP_ACCELERO_Init();
@@ -192,16 +194,20 @@ int main(void)
 //			sprintf(buffer, "Averaged X : %f; Averaged Y : %f; Averaged Z : %f;\r\n\n",
 //					gyro_velocity[0], gyro_velocity[1], gyro_velocity[2]);
 //			HAL_UART_Transmit(&huart1, (uint8_t*)buffer, strlen(buffer), HAL_MAX_DELAY);
-
+/*
 			sprintf(buffer, "Accelerometer Magnitude: %f\r\n", accel_filt_mag);
 			HAL_UART_Transmit(&huart1, (uint8_t*)buffer, strlen(buffer), HAL_MAX_DELAY);
 			sprintf(buffer, "Gyro Magnitude: %f\r\n", gyro_mag);
 			HAL_UART_Transmit(&huart1, (uint8_t*)buffer, strlen(buffer), HAL_MAX_DELAY);
 			sprintf(buffer, "Current State: %s\r\n", state_to_string(current_state));
 			HAL_UART_Transmit(&huart1, (uint8_t*)buffer, strlen(buffer), HAL_MAX_DELAY);
-
+*/
 		}
 		now = HAL_GetTick();
+        RTC_TimeTypeDef sTime;
+        RTC_DateTypeDef sDate;
+        HAL_RTC_GetTime(&hrtc, &sTime, RTC_FORMAT_BIN);
+        HAL_RTC_GetDate(&hrtc, &sDate, RTC_FORMAT_BIN);
 		switch (current_state) {
 		case NORMAL:
 			BSP_LED_Off(LED2);
@@ -238,10 +244,18 @@ int main(void)
 			break;
 		case FALL_CONFIRMED:
 			if (!fall_logged) {  // log only once per fall
+		        //char buffer[150];
+		        //sprintf(buffer, "[%lu ms] STATE: %s\r\n", HAL_GetTick(), state_to_string(current_state));
+		        //HAL_UART_Transmit(&huart1, (uint8_t*)buffer, strlen(buffer), HAL_MAX_DELAY);
+		        //fall_logged = 1;
 		        char buffer[150];
-		        sprintf(buffer, "[%lu ms] STATE: %s\r\n", HAL_GetTick(), state_to_string(current_state));
+		        sprintf(buffer, "[%02d-%02d-%02d %02d:%02d:%02d] STATE: %s\r\n",
+		                sDate.Year + 2000, sDate.Month, sDate.Date,
+		                sTime.Hours, sTime.Minutes, sTime.Seconds,
+		                state_to_string(current_state));
 		        HAL_UART_Transmit(&huart1, (uint8_t*)buffer, strlen(buffer), HAL_MAX_DELAY);
 		        fall_logged = 1;
+
 		    }
 			if (now - last_led_toggle_timestamp >= 200) {  // LED Blinking at 2.5Hz
 				BSP_LED_Toggle(LED2);
@@ -262,8 +276,15 @@ int main(void)
 		case LONG_LIE:
 			HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_SET);
 			if (!longlie_logged) {
+		        //char buffer[150];
+		        //sprintf(buffer, "[%lu ms] STATE: %s\r\n", HAL_GetTick(), state_to_string(current_state));
+		        //HAL_UART_Transmit(&huart1, (uint8_t*)buffer, strlen(buffer), HAL_MAX_DELAY);
+		        //longlie_logged = 1;
 		        char buffer[150];
-		        sprintf(buffer, "[%lu ms] STATE: %s\r\n", HAL_GetTick(), state_to_string(current_state));
+		        sprintf(buffer, "[%02d-%02d-%02d %02d:%02d:%02d] STATE: %s\r\n",
+		                sDate.Year + 2000, sDate.Month, sDate.Date,
+		                sTime.Hours, sTime.Minutes, sTime.Seconds,
+		                state_to_string(current_state));
 		        HAL_UART_Transmit(&huart1, (uint8_t*)buffer, strlen(buffer), HAL_MAX_DELAY);
 		        longlie_logged = 1;
 		    }
@@ -343,6 +364,42 @@ static void UART1_Init(void)
 
 }
 
+void RTC_Init_Custom(void)
+{
+    // Enable power and backup domain access
+    __HAL_RCC_PWR_CLK_ENABLE();
+    HAL_PWR_EnableBkUpAccess();
+
+    // Enable LSE oscillator
+    RCC_OscInitTypeDef RCC_OscInitStruct = {0};
+    RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_LSE;
+    RCC_OscInitStruct.LSEState = RCC_LSE_ON;
+    RCC_OscInitStruct.PLL.PLLState = RCC_PLL_NONE; // No PLL change
+    HAL_RCC_OscConfig(&RCC_OscInitStruct);
+
+    // Select LSE as RTC clock source
+    RCC_PeriphCLKInitTypeDef PeriphClkInit = {0};
+    PeriphClkInit.PeriphClockSelection = RCC_PERIPHCLK_RTC;
+    PeriphClkInit.RTCClockSelection = RCC_RTCCLKSOURCE_LSE;
+    HAL_RCCEx_PeriphCLKConfig(&PeriphClkInit);
+
+    // Enable RTC peripheral clock
+    __HAL_RCC_RTC_ENABLE();
+
+    // RTC configuration
+    hrtc.Instance = RTC;
+    hrtc.Init.HourFormat = RTC_HOURFORMAT_24;
+    hrtc.Init.AsynchPrediv = 127;  // For 32.768 kHz LSE
+    hrtc.Init.SynchPrediv = 255;   // 1 Hz
+    hrtc.Init.OutPut = RTC_OUTPUT_DISABLE;
+    hrtc.Init.OutPutPolarity = RTC_OUTPUT_POLARITY_HIGH;
+    hrtc.Init.OutPutType = RTC_OUTPUT_TYPE_OPENDRAIN;
+
+    if (HAL_RTC_Init(&hrtc) != HAL_OK) {
+        // Handle error (you can blink LED or stop)
+        while(1);
+    }
+}
 
 // Do not modify these lines of code. They are written to supress UART related warnings
 int _read(int file, char *ptr, int len) { return 0; }
