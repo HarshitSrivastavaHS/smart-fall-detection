@@ -13,6 +13,5 @@
 
 void NFC_Init(void);
 void NFC_WriteURL(const char *url);
-void NFC_WriteFallURL(uint32_t fall_number);
 
 #endif /* SRC_NFC_H_ */

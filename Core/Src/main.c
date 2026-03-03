@@ -57,6 +57,11 @@ const char* state_to_string(states state){ // helper function for printing curre
     }
 }
 
+#define DASHBOARD_BASE_URL "sfdd.harshitsri.com/"
+
+uint32_t fall_times[3] = {0};
+uint8_t fall_index = 0;
+uint32_t fall_counter = 0;
 
 int main(void)
 {
@@ -107,7 +112,9 @@ int main(void)
 
 	// NFC
 	NFC_Init();
-	NFC_WriteURL("google.com");
+	char url_buffer[200];
+	sprintf(url_buffer, "%s?c=0&u=0", DASHBOARD_BASE_URL);
+	NFC_WriteURL(url_buffer);
 	uint32_t fall_counter = 0;
 
 	while (1)
@@ -238,6 +245,10 @@ int main(void)
 				current_state = FALL_CONFIRMED;
 				fall_confirmed_time = now;
 				last_led_toggle_timestamp = now;
+
+				fall_counter++;
+				fall_times[fall_index] = now;
+				fall_index = (fall_index + 1) % 3;
 			}
 			else {
 				current_state = NORMAL;
@@ -298,6 +309,21 @@ int main(void)
 			break;
 		}
 
+		if (now % 2000 < 50) {
+			char url_buffer[200];
+
+			sprintf(url_buffer,
+					"%s?c=%lu&u=%lu&a=%lu&b=%lu&d=%lu",
+					DASHBOARD_BASE_URL,
+					fall_counter,
+					now,
+					fall_times[0],
+					fall_times[1],
+					fall_times[2]
+			);
+
+			NFC_WriteURL(url_buffer);
+		}
 
 		HAL_Delay(delay_ms);	// 50ms delay
 

@@ -52,12 +52,3 @@ void NFC_WriteURL(const char *url)
         2 + tlv_length + 1
     );
 }
-
-void NFC_WriteFallURL(uint32_t fall_number)
-{
-    char url[120];
-
-    sprintf(url, "fall%d.com", fall_number);
-
-    NFC_WriteURL(url);
-}
