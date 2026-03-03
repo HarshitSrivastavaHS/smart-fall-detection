@@ -11,6 +11,7 @@
 #include "../../Drivers/BSP/B-L4S5I-IOT01/stm32l4s5i_iot01_tsensor.h"
 #include "../../Drivers/BSP/B-L4S5I-IOT01/stm32l4s5i_iot01_gyro.h"
 #include <math.h>
+#include "nfc.h"
 
 #include "stdio.h"
 #include "string.h"
@@ -56,10 +57,19 @@ const char* state_to_string(states state){ // helper function for printing curre
     }
 }
 
+#define DASHBOARD_BASE_URL "sfdd.harshitsri.com/"
+
+uint32_t fall_times[3] = {0};
+uint8_t fall_index = 0;
+uint32_t fall_counter = 0;
 
 int main(void)
 {
 	const int N=4;
+	int fall_logged = 0;
+	int longlie_logged = 0;
+	int normal_logged = 0;
+	int last_buzzer_toggle = 0;
 
 	/* Reset of all peripherals, Initializes the Flash interface and the Systick. */
 	HAL_Init();
@@ -101,6 +111,13 @@ int main(void)
 	HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
 	uint32_t freefall_start_time = 0;
+	// NFC
+	NFC_Init();
+	char url_buffer[200];
+	sprintf(url_buffer, "%s?c=0&u=0", DASHBOARD_BASE_URL);
+	NFC_WriteURL(url_buffer);
+	uint32_t fall_counter = 0;
+	uint32_t last_nfc_update = 0;
 
 	while (1)
 	{
@@ -196,7 +213,7 @@ int main(void)
 //			sprintf(buffer, "Averaged X : %f; Averaged Y : %f; Averaged Z : %f;\r\n\n",
 //					gyro_velocity[0], gyro_velocity[1], gyro_velocity[2]);
 //			HAL_UART_Transmit(&huart1, (uint8_t*)buffer, strlen(buffer), HAL_MAX_DELAY);
-
+/*
 			sprintf(buffer, "Accelerometer Magnitude: %f\r\n", accel_filt_mag);
 			HAL_UART_Transmit(&huart1, (uint8_t*)buffer, strlen(buffer), HAL_MAX_DELAY);
 			sprintf(buffer, "Accelerometer Raw Magnitude: %f\r\n", accel_raw_mag);
@@ -205,16 +222,41 @@ int main(void)
 			HAL_UART_Transmit(&huart1, (uint8_t*)buffer, strlen(buffer), HAL_MAX_DELAY);
 			sprintf(buffer, "Current State: %s\r\n", state_to_string(current_state));
 			HAL_UART_Transmit(&huart1, (uint8_t*)buffer, strlen(buffer), HAL_MAX_DELAY);
-
+*/
 		}
 		now = HAL_GetTick();
 		switch (current_state) {
 		case NORMAL:
 			BSP_LED_Off(LED2);
 			high_rotation_detected = 0;
+			fall_logged = 0;
+			longlie_logged = 0;
+		    if (!normal_logged) {  // log only once per fall
+		        char buffer[150];
+		        sprintf(buffer, "[%lu ms] STATE: %s\r\n", HAL_GetTick(), state_to_string(current_state));
+		        HAL_UART_Transmit(&huart1, (uint8_t*)buffer, strlen(buffer), HAL_MAX_DELAY);
+		        normal_logged = 1;
+		    }
 			if (accel_filt_mag < FREEFALL_THRESHOLD) {
 				current_state = FREEFALL;
 				freefall_start_time = now;
+			}
+			if (now - last_nfc_update > 60000) {
+				char url_buffer[200];
+
+				sprintf(url_buffer,
+						"%s?c=%lu&u=%lu&a=%lu&b=%lu&d=%lu",
+						DASHBOARD_BASE_URL,
+						fall_counter,
+						now,
+						fall_times[0],
+						fall_times[1],
+						fall_times[2]
+							);
+
+				NFC_WriteURL(url_buffer);
+
+				last_nfc_update = now;
 			}
 			break;
 		case FREEFALL:
@@ -238,12 +280,37 @@ int main(void)
 				current_state = FALL_CONFIRMED;
 				fall_confirmed_time = now;
 				last_led_toggle_timestamp = now;
+
+				fall_counter++;
+				fall_times[fall_index] = now;
+				fall_index = (fall_index + 1) % 3;
+
+				char url_buffer[200];
+
+				sprintf(url_buffer,
+						"%s?c=%lu&u=%lu&a=%lu&b=%lu&d=%lu",
+						DASHBOARD_BASE_URL,
+						fall_counter,
+						now,
+						fall_times[0],
+						fall_times[1],
+						fall_times[2]
+				);
+
+				NFC_WriteURL(url_buffer);
+				last_nfc_update = now;
 			}
 			else {
 				current_state = NORMAL;
 			}
 			break;
 		case FALL_CONFIRMED:
+			if (!fall_logged) {  // log only once per fall
+		        char buffer[150];
+		        sprintf(buffer, "[%lu ms] STATE: %s\r\n", HAL_GetTick(), state_to_string(current_state));
+		        HAL_UART_Transmit(&huart1, (uint8_t*)buffer, strlen(buffer), HAL_MAX_DELAY);
+		        fall_logged = 1;
+		    }
 			if (now - last_led_toggle_timestamp >= 200) {  // LED Blinking at 2.5Hz
 				BSP_LED_Toggle(LED2);
 				last_led_toggle_timestamp = now;
@@ -257,10 +324,20 @@ int main(void)
 			}
 			if (BSP_PB_GetState(BUTTON_USER) == BUTTON_PRESSED) {
 				current_state = NORMAL;
+				normal_logged = 0;
 			}
 			break;
 		case LONG_LIE:
-			HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_SET);
+			if (now - last_buzzer_toggle >= 200) {
+			    HAL_GPIO_TogglePin(GPIOA, GPIO_PIN_4);
+			    last_buzzer_toggle = now;
+			}
+			if (!longlie_logged) {
+		        char buffer[150];
+		        sprintf(buffer, "[%lu ms] STATE: %s\r\n", HAL_GetTick(), state_to_string(current_state));
+		        HAL_UART_Transmit(&huart1, (uint8_t*)buffer, strlen(buffer), HAL_MAX_DELAY);
+		        longlie_logged = 1;
+		    }
 			if (now - last_led_toggle_timestamp >= 50) {
 				BSP_LED_Toggle(LED2);  // LED Blinking at 10Hz
 				last_led_toggle_timestamp = now;
@@ -271,6 +348,7 @@ int main(void)
 				}
 				if (now - button_press_start >= 5000) {
 					current_state = NORMAL;
+					normal_logged = 0;
 					button_press_start = 0;
 					HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_RESET);
 				}
@@ -280,7 +358,6 @@ int main(void)
 			}
 			break;
 		}
-
 
 		HAL_Delay(delay_ms);	// 50ms delay
 
