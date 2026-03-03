@@ -63,6 +63,7 @@ int main(void)
 	int fall_logged = 0;
 	int longlie_logged = 0;
 	int normal_logged = 0;
+	int last_buzzer_toggle = 0;
 
 	/* Reset of all peripherals, Initializes the Flash interface and the Systick. */
 	HAL_Init();
@@ -260,7 +261,10 @@ int main(void)
 			}
 			break;
 		case LONG_LIE:
-			HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_SET);
+			if (now - last_buzzer_toggle >= 200) {
+			    HAL_GPIO_TogglePin(GPIOA, GPIO_PIN_4);
+			    last_buzzer_toggle = now;
+			}
 			if (!longlie_logged) {
 		        char buffer[150];
 		        sprintf(buffer, "[%lu ms] STATE: %s\r\n", HAL_GetTick(), state_to_string(current_state));
