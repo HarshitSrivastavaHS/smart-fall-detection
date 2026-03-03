@@ -11,6 +11,7 @@
 #include "../../Drivers/BSP/B-L4S5I-IOT01/stm32l4s5i_iot01_tsensor.h"
 #include "../../Drivers/BSP/B-L4S5I-IOT01/stm32l4s5i_iot01_gyro.h"
 #include <math.h>
+#include "nfc.h"
 
 #include "stdio.h"
 #include "string.h"
@@ -103,6 +104,11 @@ int main(void)
 	GPIO_InitStruct.Pull = GPIO_NOPULL;
 	GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
 	HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
+	// NFC
+	NFC_Init();
+	NFC_WriteURL("google.com");
+	uint32_t fall_counter = 0;
 
 	while (1)
 	{
