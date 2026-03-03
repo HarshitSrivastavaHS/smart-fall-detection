@@ -21,9 +21,6 @@ void NFC_WriteURL(const char *url)
     uint8_t buffer[256];
     uint8_t empty[256];
 
-    memset(empty, 0, sizeof(empty));
-    BSP_NFCTAG_WriteData(NFC_INSTANCE, empty, NFC_NDEF_START, 256);
-
     memset(buffer, 0, sizeof(buffer));
 
     uint16_t url_len = strlen(url);

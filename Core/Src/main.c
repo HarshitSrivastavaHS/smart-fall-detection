@@ -30,10 +30,10 @@ UART_HandleTypeDef huart1;
 /*
  * Defined Threshold Values
  */
-#define FREEFALL_THRESHOLD 3
-#define IMPACT_THRESHOLD 9
-#define GYRO_THRESHOLD 1000
-#define NOT_MOVING_THRESHOLD 600
+#define FREEFALL_THRESHOLD 2.5f
+#define IMPACT_THRESHOLD 14.0f
+#define GYRO_THRESHOLD 400.0f
+#define NOT_MOVING_THRESHOLD 35.0f
 
 #define BUTTON_PRESSED 0
 #define BUTTON_NOT_PRESSED 1
@@ -90,7 +90,7 @@ int main(void)
 	int accel_buff_y[4]={0};
 	int accel_buff_z[4]={0};
 	uint32_t i=0;
-	int delay_ms=50; // 20Hz delay
+	int delay_ms=19; // 20Hz delay
 
 	states current_state = NORMAL;
 	int high_rotation_detected = 0;
@@ -110,12 +110,14 @@ int main(void)
 	GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
 	HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
+	uint32_t freefall_start_time = 0;
 	// NFC
 	NFC_Init();
 	char url_buffer[200];
 	sprintf(url_buffer, "%s?c=0&u=0", DASHBOARD_BASE_URL);
 	NFC_WriteURL(url_buffer);
 	uint32_t fall_counter = 0;
+	uint32_t last_nfc_update = 0;
 
 	while (1)
 	{
@@ -139,9 +141,9 @@ int main(void)
 
 		//The output of gyro has been made to display in dps(degree per second)
 		float gyro_velocity[3]={0.0};
-		gyro_velocity[0]=(gyro_data[0]*9.8/(1000));
-		gyro_velocity[1]=(gyro_data[1]*9.8/(1000));
-		gyro_velocity[2]=(gyro_data[2]*9.8/(1000));
+		gyro_velocity[0] = (float)gyro_data[0] / 1000.0f;
+		gyro_velocity[1] = (float)gyro_data[1] / 1000.0f;
+		gyro_velocity[2] = (float)gyro_data[2] / 1000.0f;
 
 
 		//Preprocessing the filtered outputs  The same needs to be done for the output from the C program as well
@@ -162,6 +164,11 @@ int main(void)
 		float accel_filt_mag = sqrtf(accel_filt_asm[0]*accel_filt_asm[0]
 								+ accel_filt_asm[1]*accel_filt_asm[1]
 								+ accel_filt_asm[2]*accel_filt_asm[2]);
+
+		float accel_raw_mag = sqrtf(accel_data_i16[0]* (9.8/1000.0f)*accel_data_i16[0]* (9.8/1000.0f)
+								+ accel_data_i16[1]* (9.8/1000.0f)*accel_data_i16[1]* (9.8/1000.0f)
+								+ accel_data_i16[2]* (9.8/1000.0f)*accel_data_i16[2]* (9.8/1000.0f));
+
 
 		float gyro_mag = sqrtf(gyro_velocity[0]*gyro_velocity[0]
 								+ gyro_velocity[1]*gyro_velocity[1]
@@ -209,6 +216,8 @@ int main(void)
 /*
 			sprintf(buffer, "Accelerometer Magnitude: %f\r\n", accel_filt_mag);
 			HAL_UART_Transmit(&huart1, (uint8_t*)buffer, strlen(buffer), HAL_MAX_DELAY);
+			sprintf(buffer, "Accelerometer Raw Magnitude: %f\r\n", accel_raw_mag);
+			HAL_UART_Transmit(&huart1, (uint8_t*)buffer, strlen(buffer), HAL_MAX_DELAY);
 			sprintf(buffer, "Gyro Magnitude: %f\r\n", gyro_mag);
 			HAL_UART_Transmit(&huart1, (uint8_t*)buffer, strlen(buffer), HAL_MAX_DELAY);
 			sprintf(buffer, "Current State: %s\r\n", state_to_string(current_state));
@@ -230,14 +239,40 @@ int main(void)
 		    }
 			if (accel_filt_mag < FREEFALL_THRESHOLD) {
 				current_state = FREEFALL;
+				freefall_start_time = now;
+			}
+			if (now - last_nfc_update > 60000) {
+				char url_buffer[200];
+
+				sprintf(url_buffer,
+						"%s?c=%lu&u=%lu&a=%lu&b=%lu&d=%lu",
+						DASHBOARD_BASE_URL,
+						fall_counter,
+						now,
+						fall_times[0],
+						fall_times[1],
+						fall_times[2]
+							);
+
+				NFC_WriteURL(url_buffer);
+
+				last_nfc_update = now;
 			}
 			break;
 		case FREEFALL:
-			if (accel_filt_mag > IMPACT_THRESHOLD) {
-				current_state = IMPACT;
+			if (accel_raw_mag > IMPACT_THRESHOLD) {
+				if (now - freefall_start_time > 60) {
+					current_state = IMPACT;
+				} else {
+					current_state = NORMAL; // Was just a jitter
+				}
 			}
 			if (gyro_mag > GYRO_THRESHOLD) {
 				high_rotation_detected = 1;
+			}
+			if (now - freefall_start_time > 2000) {
+				current_state = NORMAL;
+				high_rotation_detected = 0;
 			}
 			break;
 		case IMPACT:
@@ -249,6 +284,21 @@ int main(void)
 				fall_counter++;
 				fall_times[fall_index] = now;
 				fall_index = (fall_index + 1) % 3;
+
+				char url_buffer[200];
+
+				sprintf(url_buffer,
+						"%s?c=%lu&u=%lu&a=%lu&b=%lu&d=%lu",
+						DASHBOARD_BASE_URL,
+						fall_counter,
+						now,
+						fall_times[0],
+						fall_times[1],
+						fall_times[2]
+				);
+
+				NFC_WriteURL(url_buffer);
+				last_nfc_update = now;
 			}
 			else {
 				current_state = NORMAL;
@@ -307,22 +357,6 @@ int main(void)
 				button_press_start = 0;
 			}
 			break;
-		}
-
-		if (now % 2000 < 50) {
-			char url_buffer[200];
-
-			sprintf(url_buffer,
-					"%s?c=%lu&u=%lu&a=%lu&b=%lu&d=%lu",
-					DASHBOARD_BASE_URL,
-					fall_counter,
-					now,
-					fall_times[0],
-					fall_times[1],
-					fall_times[2]
-			);
-
-			NFC_WriteURL(url_buffer);
 		}
 
 		HAL_Delay(delay_ms);	// 50ms delay
