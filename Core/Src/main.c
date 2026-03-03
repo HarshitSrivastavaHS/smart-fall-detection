@@ -6,6 +6,7 @@
 
 
 /*--------------------------- Includes ---------------------------------------*/
+#include <ds1307_for_stm32_hal.h>
 #include "main.h"
 #include "../../Drivers/BSP/B-L4S5I-IOT01/stm32l4s5i_iot01_accelero.h"
 #include "../../Drivers/BSP/B-L4S5I-IOT01/stm32l4s5i_iot01_tsensor.h"
@@ -16,16 +17,20 @@
 #include "string.h"
 #include <sys/stat.h>
 
+UART_HandleTypeDef huart1;
+RTC_HandleTypeDef hrtc;
+I2C_HandleTypeDef hi2c1;
+
 static void UART1_Init(void);
-static void RTC_Init_Custom(void);
+static void I2C1_Init(void);
+
 extern void initialise_monitor_handles(void);	// for semi-hosting support (printf). Will not be required if transmitting via UART
 
 extern int mov_avg(int N, int* accel_buff); // asm implementation
 
 int mov_avg_C(int N, int* accel_buff); // Reference C implementation
 
-UART_HandleTypeDef huart1;
-RTC_HandleTypeDef hrtc;
+
 
 /*
  * Defined Threshold Values
@@ -34,7 +39,7 @@ RTC_HandleTypeDef hrtc;
 #define IMPACT_THRESHOLD 9
 #define GYRO_THRESHOLD 1000
 #define NOT_MOVING_THRESHOLD 600
-
+#define DS1307_ADDR 0x68
 #define BUTTON_PRESSED 0
 #define BUTTON_NOT_PRESSED 1
 
@@ -71,7 +76,8 @@ int main(void)
 	/* UART initialization  */
 	UART1_Init();
 
-	RTC_Init_Custom();
+	I2C1_Init();
+	DS1307_Init(&hi2c1);
 	/* Peripheral initializations using BSP functions */
 	BSP_LED_Init(LED2);
 	BSP_ACCELERO_Init();
@@ -80,6 +86,7 @@ int main(void)
 
 	/*Set the initial LED state to off*/
 	BSP_LED_Off(LED2);
+	uint8_t buffer[3];
 
 	int accel_buff_x[4]={0};
 	int accel_buff_y[4]={0};
@@ -94,7 +101,19 @@ int main(void)
 	uint32_t last_led_toggle_timestamp = 0;
 	uint32_t now = 0;
 
+	if (DS1307_GetClockHalt()) {
 
+	    DS1307_SetClockHalt(0);   // 🔥 START oscillator FIRST
+
+	    DS1307_SetYear(2026);
+	    DS1307_SetMonth(3);
+	    DS1307_SetDate(3);
+	    DS1307_SetDayOfWeek(5);
+
+	    DS1307_SetHour(16);
+	    DS1307_SetMinute(30);
+	    DS1307_SetSecond(0);
+	}
 
 	// Setting UP GPIO Pin D7 (PortA, Pin4)
 	__HAL_RCC_GPIOA_CLK_ENABLE();
@@ -194,20 +213,10 @@ int main(void)
 //			sprintf(buffer, "Averaged X : %f; Averaged Y : %f; Averaged Z : %f;\r\n\n",
 //					gyro_velocity[0], gyro_velocity[1], gyro_velocity[2]);
 //			HAL_UART_Transmit(&huart1, (uint8_t*)buffer, strlen(buffer), HAL_MAX_DELAY);
-/*
-			sprintf(buffer, "Accelerometer Magnitude: %f\r\n", accel_filt_mag);
-			HAL_UART_Transmit(&huart1, (uint8_t*)buffer, strlen(buffer), HAL_MAX_DELAY);
-			sprintf(buffer, "Gyro Magnitude: %f\r\n", gyro_mag);
-			HAL_UART_Transmit(&huart1, (uint8_t*)buffer, strlen(buffer), HAL_MAX_DELAY);
-			sprintf(buffer, "Current State: %s\r\n", state_to_string(current_state));
-			HAL_UART_Transmit(&huart1, (uint8_t*)buffer, strlen(buffer), HAL_MAX_DELAY);
-*/
+
 		}
 		now = HAL_GetTick();
-        RTC_TimeTypeDef sTime;
-        RTC_DateTypeDef sDate;
-        HAL_RTC_GetTime(&hrtc, &sTime, RTC_FORMAT_BIN);
-        HAL_RTC_GetDate(&hrtc, &sDate, RTC_FORMAT_BIN);
+
 		switch (current_state) {
 		case NORMAL:
 			BSP_LED_Off(LED2);
@@ -215,9 +224,11 @@ int main(void)
 			fall_logged = 0;
 			longlie_logged = 0;
 		    if (!normal_logged) {  // log only once per fall
-		        char buffer[150];
-		        sprintf(buffer, "[%lu ms] STATE: %s\r\n", HAL_GetTick(), state_to_string(current_state));
-		        HAL_UART_Transmit(&huart1, (uint8_t*)buffer, strlen(buffer), HAL_MAX_DELAY);
+		    	uint8_t hours = DS1307_GetHour();
+		    	uint8_t minutes = DS1307_GetMinute();
+		    	uint8_t seconds = DS1307_GetSecond();
+		    	sprintf(buffer, "RTC Time: %02d:%02d:%02d\r\n", hours, minutes, seconds);
+		    	HAL_UART_Transmit(&huart1, (uint8_t*)buffer, strlen(buffer), HAL_MAX_DELAY);
 		        normal_logged = 1;
 		    }
 			if (accel_filt_mag < FREEFALL_THRESHOLD) {
@@ -248,12 +259,12 @@ int main(void)
 		        //sprintf(buffer, "[%lu ms] STATE: %s\r\n", HAL_GetTick(), state_to_string(current_state));
 		        //HAL_UART_Transmit(&huart1, (uint8_t*)buffer, strlen(buffer), HAL_MAX_DELAY);
 		        //fall_logged = 1;
-		        char buffer[150];
-		        sprintf(buffer, "[%02d-%02d-%02d %02d:%02d:%02d] STATE: %s\r\n",
-		                sDate.Year + 2000, sDate.Month, sDate.Date,
-		                sTime.Hours, sTime.Minutes, sTime.Seconds,
-		                state_to_string(current_state));
-		        HAL_UART_Transmit(&huart1, (uint8_t*)buffer, strlen(buffer), HAL_MAX_DELAY);
+			    uint8_t hours = DS1307_GetHour();
+			    uint8_t minutes = DS1307_GetMinute();
+			    uint8_t seconds = DS1307_GetSecond();
+			    sprintf(buffer, "[%02d:%02d:%02d] STATE: %s\r\n", hours, minutes, seconds,
+			            state_to_string(current_state));
+			    HAL_UART_Transmit(&huart1, (uint8_t*)buffer, strlen(buffer), HAL_MAX_DELAY);
 		        fall_logged = 1;
 
 		    }
@@ -276,16 +287,12 @@ int main(void)
 		case LONG_LIE:
 			HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, GPIO_PIN_SET);
 			if (!longlie_logged) {
-		        //char buffer[150];
-		        //sprintf(buffer, "[%lu ms] STATE: %s\r\n", HAL_GetTick(), state_to_string(current_state));
-		        //HAL_UART_Transmit(&huart1, (uint8_t*)buffer, strlen(buffer), HAL_MAX_DELAY);
-		        //longlie_logged = 1;
-		        char buffer[150];
-		        sprintf(buffer, "[%02d-%02d-%02d %02d:%02d:%02d] STATE: %s\r\n",
-		                sDate.Year + 2000, sDate.Month, sDate.Date,
-		                sTime.Hours, sTime.Minutes, sTime.Seconds,
-		                state_to_string(current_state));
-		        HAL_UART_Transmit(&huart1, (uint8_t*)buffer, strlen(buffer), HAL_MAX_DELAY);
+			    uint8_t hours = DS1307_GetHour();
+			    uint8_t minutes = DS1307_GetMinute();
+			    uint8_t seconds = DS1307_GetSecond();
+			    sprintf(buffer, "[%02d:%02d:%02d] STATE: %s\r\n", hours, minutes, seconds,
+			            state_to_string(current_state));
+			    HAL_UART_Transmit(&huart1, (uint8_t*)buffer, strlen(buffer), HAL_MAX_DELAY);
 		        longlie_logged = 1;
 		    }
 			if (now - last_led_toggle_timestamp >= 50) {
@@ -364,40 +371,34 @@ static void UART1_Init(void)
 
 }
 
-void RTC_Init_Custom(void)
+void I2C1_Init(void)
 {
-    // Enable power and backup domain access
-    __HAL_RCC_PWR_CLK_ENABLE();
-    HAL_PWR_EnableBkUpAccess();
+    __HAL_RCC_I2C1_CLK_ENABLE();   // Enable I2C1 clock
+    __HAL_RCC_GPIOB_CLK_ENABLE();  // Enable GPIOB clock for pins
 
-    // Enable LSE oscillator
-    RCC_OscInitTypeDef RCC_OscInitStruct = {0};
-    RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_LSE;
-    RCC_OscInitStruct.LSEState = RCC_LSE_ON;
-    RCC_OscInitStruct.PLL.PLLState = RCC_PLL_NONE; // No PLL change
-    HAL_RCC_OscConfig(&RCC_OscInitStruct);
+    GPIO_InitTypeDef GPIO_InitStruct = {0};
 
-    // Select LSE as RTC clock source
-    RCC_PeriphCLKInitTypeDef PeriphClkInit = {0};
-    PeriphClkInit.PeriphClockSelection = RCC_PERIPHCLK_RTC;
-    PeriphClkInit.RTCClockSelection = RCC_RTCCLKSOURCE_LSE;
-    HAL_RCCEx_PeriphCLKConfig(&PeriphClkInit);
+    // PB8 = SCL, PB9 = SDA (D5/D6 on board)
+    GPIO_InitStruct.Pin = GPIO_PIN_8 | GPIO_PIN_9;
+    GPIO_InitStruct.Mode = GPIO_MODE_AF_OD;       // Open-Drain for I2C
+    GPIO_InitStruct.Pull = GPIO_PULLUP;           // No internal pull-up
+    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
+    GPIO_InitStruct.Alternate = GPIO_AF4_I2C1;    // Alternate function for I2C1
+    HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
-    // Enable RTC peripheral clock
-    __HAL_RCC_RTC_ENABLE();
+    // I2C configuration
+    hi2c1.Instance = I2C1;
+    hi2c1.Init.Timing = 0x20303E5D;               // 100 kHz standard I2C
+    hi2c1.Init.OwnAddress1 = 0;
+    hi2c1.Init.AddressingMode = I2C_ADDRESSINGMODE_7BIT;
+    hi2c1.Init.DualAddressMode = I2C_DUALADDRESS_DISABLE;
+    hi2c1.Init.OwnAddress2 = 0;
+    hi2c1.Init.GeneralCallMode = I2C_GENERALCALL_DISABLE;
+    hi2c1.Init.NoStretchMode = I2C_NOSTRETCH_DISABLE;
 
-    // RTC configuration
-    hrtc.Instance = RTC;
-    hrtc.Init.HourFormat = RTC_HOURFORMAT_24;
-    hrtc.Init.AsynchPrediv = 127;  // For 32.768 kHz LSE
-    hrtc.Init.SynchPrediv = 255;   // 1 Hz
-    hrtc.Init.OutPut = RTC_OUTPUT_DISABLE;
-    hrtc.Init.OutPutPolarity = RTC_OUTPUT_POLARITY_HIGH;
-    hrtc.Init.OutPutType = RTC_OUTPUT_TYPE_OPENDRAIN;
-
-    if (HAL_RTC_Init(&hrtc) != HAL_OK) {
-        // Handle error (you can blink LED or stop)
-        while(1);
+    if(HAL_I2C_Init(&hi2c1) != HAL_OK)
+    {
+        while(1); // Error: hang if I2C fails to init
     }
 }
 
