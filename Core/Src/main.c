@@ -359,7 +359,7 @@ int main(void)
 			break;
 		}
 
-		HAL_Delay(delay_ms);	// 50ms delay
+		HAL_Delay(delay_ms);
 
 		i++;
 
