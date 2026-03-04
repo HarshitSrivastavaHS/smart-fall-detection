@@ -16,11 +16,14 @@
  .align 2
 @ CG2028 Assignment, Sem 2, AY 2025/26
 @ (c) ECE NUS, 2025
-@ Write Student 1’s Name here: ABCD (A1234567R)
-@ Write Student 2’s Name here: WXYZ (A0000007X)
+@ Write Student 1’s Name here: Cheo Zhi Xian Matheu (A0307411U)
+@ Write Student 2’s Name here: Srivastava Harshit (A0305938W)
 @ You could create a look-up table of registers here:
-@ R0 ...
-@ R1 ...
+@ R0 input N ; Returns result=sum/N at end
+@ R1 pointer to most recent accel_buff
+@ R2 Loop Counter
+@ R3 Stores current accel_buff value
+@ R4 Tracks total sum
 @ write your program from here:
 mov_avg:
  PUSH {r2-r11, lr}
