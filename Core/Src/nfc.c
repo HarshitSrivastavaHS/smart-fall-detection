@@ -3,7 +3,7 @@
 #include <stdio.h>
 
 #define NFC_INSTANCE 0
-#define NFC_NDEF_START 0x0004  // IMPORTANT: NDEF starts at 0x0008
+#define NFC_NDEF_START 0x0004
 
 void NFC_Init(void)
 {
@@ -49,3 +49,8 @@ void NFC_WriteURL(const char *url)
         2 + tlv_length + 1
     );
 }
+
+
+
+
+
